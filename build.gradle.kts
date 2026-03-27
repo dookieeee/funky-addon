@@ -27,6 +27,9 @@ dependencies {
 
     // Meteor
     modImplementation(libs.meteor.client)
+
+    //Mods in libs folder
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
 }
 
 tasks {
