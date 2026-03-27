@@ -1,8 +1,6 @@
 package com.example.addon.modules;
 
 import baritone.api.BaritoneAPI;
-import baritone.api.pathing.goals.GoalBlock;
-import baritone.api.process.MineProcess;
 
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.settings.*;
@@ -11,14 +9,15 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.item.*;
-import net.minecraft.recipe.Recipe;
 import net.minecraft.screen.*;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.math.*;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.Direction;
+import net.minecraft.block.Block;
+import net.minecraft.block.Blocks;
 
-import java.util.*;
+import java.util.List;
 
 public class AutoDiamondBot extends Module {
     private final MinecraftClient mc = MinecraftClient.getInstance();
@@ -51,19 +50,20 @@ public class AutoDiamondBot extends Module {
     }
 
     private Stage stage;
-
     private BlockPos craftingPos;
     private BlockPos furnacePos;
 
     public AutoDiamondBot() {
-        super(com.example.addon.AddonTemplate.CATEGORY, "auto-bot", "Autonomous diamond bot with Baritone.");
+        super(com.example.addon.AddonTemplate.CATEGORY, "auto-bot", "Autonomous diamond bot.");
     }
 
     @Override
     public void onActivate() {
         stage = Stage.WOOD;
+        craftingPos = null;
+        furnacePos = null;
 
-        warning("⚠ Please give the bot safe food before starting!");
+        warning("⚠ Give the bot safe food before enabling!");
     }
 
     // =========================
@@ -72,10 +72,9 @@ public class AutoDiamondBot extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (mc.player == null) return;
+        if (mc.player == null || mc.world == null) return;
 
         eatIfNeeded();
-        cleanInventory();
 
         switch (stage) {
             case WOOD -> {
@@ -84,32 +83,42 @@ public class AutoDiamondBot extends Module {
             }
 
             case STONE -> {
-                if (!has(Items.WOODEN_PICKAXE)) craft(Items.WOODEN_PICKAXE);
+                if (!has(Items.WOODEN_PICKAXE)) craftSimple(Items.WOODEN_PICKAXE);
                 else if (count(Items.COBBLESTONE) < 20) mine("stone");
                 else stage = Stage.IRON;
             }
 
             case IRON -> {
-                if (!has(Items.STONE_PICKAXE)) craft(Items.STONE_PICKAXE);
+                if (!has(Items.STONE_PICKAXE)) craftSimple(Items.STONE_PICKAXE);
                 else if (count(Items.RAW_IRON) < 27) mine("iron_ore");
                 else stage = Stage.SMELT;
             }
 
             case SMELT -> {
                 if (!has(Items.FURNACE)) {
-                    craft(Items.FURNACE);
-                } else {
-                    smelt();
-                    if (count(Items.IRON_INGOT) >= 27) stage = Stage.GEAR;
+                    craftSimple(Items.FURNACE);
+                    return;
+                }
+
+                // ensure fuel
+                if (count(Items.COAL) < 5) {
+                    mine("coal_ore");
+                    return;
+                }
+
+                smeltIron();
+
+                if (count(Items.IRON_INGOT) >= 27) {
+                    stage = Stage.GEAR;
                 }
             }
 
             case GEAR -> {
-                craft(Items.IRON_PICKAXE);
-                craft(Items.IRON_HELMET);
-                craft(Items.IRON_CHESTPLATE);
-                craft(Items.IRON_LEGGINGS);
-                craft(Items.IRON_BOOTS);
+                craftSimple(Items.IRON_PICKAXE);
+                craftSimple(Items.IRON_HELMET);
+                craftSimple(Items.IRON_CHESTPLATE);
+                craftSimple(Items.IRON_LEGGINGS);
+                craftSimple(Items.IRON_BOOTS);
 
                 if (hasFullIron()) stage = Stage.DIAMOND;
             }
@@ -130,79 +139,77 @@ public class AutoDiamondBot extends Module {
     // BARITONE
     // =========================
 
-    private void mine(String name) {
-        MineProcess mine = BaritoneAPI.getProvider().getPrimaryBaritone().getMineProcess();
-        mine.mineByName(name);
+    private void mine(String block) {
+        BaritoneAPI.getProvider()
+            .getPrimaryBaritone()
+            .getCommandManager()
+            .execute("mine " + block);
     }
 
     private void walkTo(BlockPos pos) {
         BaritoneAPI.getProvider()
             .getPrimaryBaritone()
-            .getCustomGoalProcess()
-            .setGoalAndPath(new GoalBlock(pos));
+            .getCommandManager()
+            .execute("goto " + pos.getX() + " " + pos.getY() + " " + pos.getZ());
     }
 
     // =========================
-    // CRAFTING
+    // SMART BLOCK DETECTION
     // =========================
 
-    private void craft(Item item) {
-        if (!(mc.player.currentScreenHandler instanceof CraftingScreenHandler handler)) {
+    private BlockPos findNearby(Block block, int radius) {
+        BlockPos base = mc.player.getBlockPos();
+
+        for (int x = -radius; x <= radius; x++) {
+            for (int y = -2; y <= 2; y++) {
+                for (int z = -radius; z <= radius; z++) {
+                    BlockPos pos = base.add(x, y, z);
+
+                    if (mc.world.getBlockState(pos).getBlock() == block) {
+                        return pos;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    // =========================
+    // CRAFTING (SIMPLIFIED SAFE)
+    // =========================
+
+    private void craftSimple(Item item) {
+        if (!(mc.player.currentScreenHandler instanceof CraftingScreenHandler)) {
             openCrafting();
             return;
         }
 
-        Recipe<?> recipe = mc.world.getRecipeManager()
-            .values()
-            .stream()
-            .filter(r -> r.getOutput(mc.world.getRegistryManager()).getItem() == item)
-            .findFirst()
-            .orElse(null);
-
-        if (recipe == null) return;
-
-        autofill(handler, recipe);
-
-        mc.interactionManager.clickSlot(
-            handler.syncId,
-            0,
-            0,
-            SlotActionType.QUICK_MOVE,
-            mc.player
+        // Use recipe book quick craft (much more stable)
+        mc.interactionManager.clickRecipe(
+            mc.player.currentScreenHandler.syncId,
+            mc.world.getRecipeManager().getFirstMatch(
+                net.minecraft.recipe.RecipeType.CRAFTING,
+                new net.minecraft.inventory.CraftingInventory(
+                    mc.player.currentScreenHandler, 3, 3
+                ),
+                mc.world
+            ).orElseThrow(),
+            false
         );
     }
 
-    private void autofill(CraftingScreenHandler handler, Recipe<?> recipe) {
-        int slot = 1;
-
-        for (var ing : recipe.getIngredients()) {
-            if (ing.isEmpty()) { slot++; continue; }
-
-            int invSlot = findIngredient(ing);
-            if (invSlot == -1) continue;
-
-            click(invSlot);
-            click(slot);
-            slot++;
-        }
-    }
-
     // =========================
-    // SMELTING
+    // FURNACE
     // =========================
 
-    private void smelt() {
+    private void smeltIron() {
         if (!(mc.player.currentScreenHandler instanceof FurnaceScreenHandler handler)) {
             openFurnace();
             return;
         }
 
         moveToSlot(handler, Items.RAW_IRON, 0);
-
-        if (count(Items.COAL) > 0)
-            moveToSlot(handler, Items.COAL, 1);
-        else
-            moveToSlot(handler, Items.OAK_PLANKS, 1);
+        moveToSlot(handler, Items.COAL, 1);
 
         mc.interactionManager.clickSlot(
             handler.syncId,
@@ -214,46 +221,47 @@ public class AutoDiamondBot extends Module {
     }
 
     // =========================
-    // BLOCK NAVIGATION (FIXED)
+    // BLOCK INTERACTION
     // =========================
 
     private void openCrafting() {
-        if (!has(Items.CRAFTING_TABLE)) {
-            craft(Items.CRAFTING_TABLE);
-            return;
-        }
+        BlockPos nearby = findNearby(Blocks.CRAFTING_TABLE, 5);
+        if (nearby != null) craftingPos = nearby;
 
         if (craftingPos == null) {
-            craftingPos = placeBlock(Items.CRAFTING_TABLE);
-        } else {
-            walkTo(craftingPos);
+            if (!has(Items.CRAFTING_TABLE)) return;
+            craftingPos = placeBlock();
+        }
 
-            if (mc.player.getBlockPos().isWithinDistance(craftingPos, 3)) {
-                interact(craftingPos);
-            }
+        walkTo(craftingPos);
+
+        if (mc.player.getBlockPos().isWithinDistance(craftingPos, 3)) {
+            interact(craftingPos);
         }
     }
 
     private void openFurnace() {
-        if (furnacePos == null) {
-            furnacePos = placeBlock(Items.FURNACE);
-        } else {
-            walkTo(furnacePos);
+        BlockPos nearby = findNearby(Blocks.FURNACE, 5);
+        if (nearby != null) furnacePos = nearby;
 
-            if (mc.player.getBlockPos().isWithinDistance(furnacePos, 3)) {
-                interact(furnacePos);
-            }
+        if (furnacePos == null) {
+            furnacePos = placeBlock();
+        }
+
+        walkTo(furnacePos);
+
+        if (mc.player.getBlockPos().isWithinDistance(furnacePos, 3)) {
+            interact(furnacePos);
         }
     }
 
-    private BlockPos placeBlock(Item item) {
+    private BlockPos placeBlock() {
         BlockPos pos = mc.player.getBlockPos().down();
 
         mc.interactionManager.interactBlock(
             mc.player,
-            mc.world,
             mc.player.getActiveHand(),
-            new BlockHitResult(mc.player.getPos(), Direction.UP, pos, false)
+            new BlockHitResult(mc.player.getEyePos(), Direction.UP, pos, false)
         );
 
         return pos;
@@ -262,51 +270,29 @@ public class AutoDiamondBot extends Module {
     private void interact(BlockPos pos) {
         mc.interactionManager.interactBlock(
             mc.player,
-            mc.world,
             mc.player.getActiveHand(),
-            new BlockHitResult(mc.player.getPos(), Direction.UP, pos, false)
+            new BlockHitResult(mc.player.getEyePos(), Direction.UP, pos, false)
         );
     }
 
     // =========================
-    // FOOD SYSTEM (FIXED)
+    // FOOD SYSTEM
     // =========================
+
+    private boolean isFood(ItemStack stack) {
+        return stack.getItem().getFoodComponent() != null;
+    }
 
     private void eatIfNeeded() {
         if (mc.player.getHungerManager().getFoodLevel() >= 12) return;
 
-        for (ItemStack stack : mc.player.getInventory().main) {
-            if (stack.isFood() && !foodBlacklist.get().contains(stack.getItem())) {
-                mc.player.setCurrentHand(mc.player.getActiveHand());
-                mc.options.useKey.setPressed(true);
-                return;
-            }
-        }
-    }
-
-    // =========================
-    // INVENTORY
-    // =========================
-
-    private void cleanInventory() {
         for (int i = 0; i < mc.player.getInventory().size(); i++) {
             ItemStack stack = mc.player.getInventory().getStack(i);
 
-            if (stack.isEmpty()) continue;
-
-            if (!(stack.getItem() instanceof ToolItem) &&
-                !(stack.getItem() instanceof ArmorItem) &&
-                !stack.isFood() &&
-                stack.getItem() != Items.DIAMOND &&
-                stack.getItem() != Items.IRON_INGOT) {
-
-                mc.interactionManager.clickSlot(
-                    mc.player.currentScreenHandler.syncId,
-                    i,
-                    1,
-                    SlotActionType.THROW,
-                    mc.player
-                );
+            if (isFood(stack) && !foodBlacklist.get().contains(stack.getItem())) {
+                mc.player.getInventory().selectedSlot = i;
+                mc.options.useKey.setPressed(true);
+                return;
             }
         }
     }
@@ -317,8 +303,10 @@ public class AutoDiamondBot extends Module {
 
     private int count(Item item) {
         int total = 0;
-        for (ItemStack s : mc.player.getInventory().main)
+        for (int i = 0; i < mc.player.getInventory().size(); i++) {
+            ItemStack s = mc.player.getInventory().getStack(i);
             if (s.getItem() == item) total += s.getCount();
+        }
         return total;
     }
 
@@ -334,13 +322,6 @@ public class AutoDiamondBot extends Module {
             && has(Items.IRON_PICKAXE);
     }
 
-    private int findIngredient(net.minecraft.recipe.Ingredient ing) {
-        for (int i = 0; i < mc.player.getInventory().main.size(); i++) {
-            if (ing.test(mc.player.getInventory().main.get(i))) return i;
-        }
-        return -1;
-    }
-
     private void moveToSlot(FurnaceScreenHandler handler, Item item, int slot) {
         int inv = findItem(item);
         if (inv == -1) return;
@@ -350,8 +331,9 @@ public class AutoDiamondBot extends Module {
     }
 
     private int findItem(Item item) {
-        for (int i = 0; i < mc.player.getInventory().main.size(); i++)
-            if (mc.player.getInventory().main.get(i).getItem() == item) return i;
+        for (int i = 0; i < mc.player.getInventory().size(); i++) {
+            if (mc.player.getInventory().getStack(i).getItem() == item) return i;
+        }
         return -1;
     }
 
