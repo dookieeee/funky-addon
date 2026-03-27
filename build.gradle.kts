@@ -29,7 +29,7 @@ dependencies {
     modImplementation(libs.meteor.client)
 
     //Mods in libs folder
-    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
+    modImplementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
 }
 
 tasks {
