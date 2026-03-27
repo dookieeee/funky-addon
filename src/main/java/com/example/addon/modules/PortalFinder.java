@@ -5,6 +5,7 @@ import baritone.api.pathing.goals.GoalBlock;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
+import meteordevelopment.meteorclient.systems.modules.Categories;
 import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.math.BlockPos;
@@ -18,8 +19,9 @@ public class PortalFinder extends Module {
     private boolean goingToPortal = false;
 
     public PortalFinder() {
-        super(AddonTemplate.CATEGORY, "portal-finder", "Finds a SAFE portal and enters it.");
+        super(Categories.World, "portal-finder", "Finds a SAFE portal and enters it.");
     }
+
 
     @Override
     public void onActivate() {
