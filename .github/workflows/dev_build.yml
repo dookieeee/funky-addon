@@ -1,7 +1,6 @@
 name: Publish Development Build
 on: push
 
-# TÄMÄ PUUTTUI: Antaa oikeuden kirjoittaa Release-osioon
 permissions:
   contents: write
 
@@ -31,7 +30,6 @@ jobs:
           tag_name: snapshot
           name: Dev Build
           prerelease: true
-          # Poistaa vanhan snapshotin ja korvaa uudella
           make_latest: true
           files: build/libs/*.jar
         env:
