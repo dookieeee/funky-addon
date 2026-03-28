@@ -24,6 +24,8 @@ public class AddonTemplate extends MeteorAddon {
 
         // Modules
         Modules.get().add(new ModuleExample());
+        Modules.get().add(new AutoDiamondBot());
+        Modules.get().add(new PortalFinder());
 
         // Commands
         Commands.add(new CommandExample());
